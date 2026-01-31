@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+sfuim_venv/
+.venv/
+venv/
+
+# OS / Editor
+.vscode/
+.DS_Store
