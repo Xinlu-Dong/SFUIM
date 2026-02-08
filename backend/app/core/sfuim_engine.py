@@ -18,6 +18,8 @@ class SFUIMConfig:
 
 def new_profile() -> Dict:
     # θ_C, θ_E, θ_S ∈ [-1,1], s ∈ [0,1]
+    #C: Complexity; E: Examples; S: Structure
+    #s: 初始满意度头
     return {
         "theta": {"C": 0.0, "E": 0.0, "S": 0.0},
         "s": 0.5,

@@ -7,14 +7,18 @@ from app.models.schemas import (
     StartStudyRequest, StartStudyResponse,
     ChatRequest, ChatResponse,
     FeedbackRequest, FeedbackResponse,
+    NextResponse
 )
 from app.core.storage import SessionState, TurnLog, session_store
 from app.core.sfuim_engine import SFUIMConfig, new_profile, render_prompt, update_profile
 from app.core.llm_interface import DummyLLM
+from app.core.persistence import save_session
 
 router = APIRouter()
 cfg = SFUIMConfig()
 llm = DummyLLM()
+MAX_TURNS_PER_CONDITION = 10
+
 
 
 def make_condition_sequence() -> list[str]:
@@ -33,6 +37,7 @@ def assign_system_label() -> str:
     return random.choice(["A", "B", "C"])
 
 
+
 @router.post("/study/start", response_model=StartStudyResponse)
 def start_study(req: StartStudyRequest):
     sid = uuid4().hex
@@ -47,6 +52,7 @@ def start_study(req: StartStudyRequest):
         profile=new_profile(),
         turns=[],
         turn_count_by_condition={c: 0 for c in seq},
+        ended_reason_by_condition={c: None for c in seq},
     )
 
     # ✅ 关键：统一用 session_store（不要用 store）
@@ -54,62 +60,62 @@ def start_study(req: StartStudyRequest):
 
     return StartStudyResponse(session_id=sid, system_label=label)
 
-MAX_TURNS_PER_CONDITION = 10
 
 @router.post("/study/{session_id}/chat", response_model=ChatResponse)
 def chat(session_id: str, req: ChatRequest):
-    # ✅ storage.py 里 get() 已经改成返回 Optional 了
     state = session_store.get(session_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Unknown session_id")
 
-    # session 完成判断
-    if state.active_condition_index >= len(state.condition_sequence):
-        raise HTTPException(status_code=400, detail="Study already finished")
+    if _is_finished(state):
+        return ChatResponse(
+            answer="本次实验已完成，感谢参与！",
+            turn_index=len(state.turns),
+            active_condition=None,
+            turn_in_condition=0,
+            need_switch=False,
+            is_finished=True,
+        )
 
-    condition = state.condition_sequence[state.active_condition_index]
+    condition = _active_condition(state)
+    turns_in_cond = state.turn_count_by_condition[condition]
 
-    if state.turn_count_by_condition[condition] >= MAX_TURNS_PER_CONDITION:
-        switched = _advance_condition(state)
-        if not switched:
-            # 已经没有下一条件了
-            return ChatResponse(
-                answer="本次实验已完成，感谢参与！",
-                turn_index=len(state.turns),
-                did_switch=True,
-                is_finished=True,
-                active_condition=None,
-            )
-        condition = state.condition_sequence[state.active_condition_index]
+    # ✅ 满 10 轮：不再继续回答，提示必须切换
+    if turns_in_cond >= MAX_TURNS_PER_CONDITION:
+        state.ended_reason_by_condition[condition] = "max_turns"
+        return ChatResponse(
+            answer="该阶段已达到最大对话轮数（10轮）。请点击“结束对话”进入下一系统。",
+            turn_index=len(state.turns),
+            active_condition=condition,
+            turn_in_condition=turns_in_cond,
+            need_switch=True,
+            is_finished=False,
+        )
 
-    # TODO: 未来加 Task&Topic handler
+    # 正常生成 prompt & answer
     prompt = render_prompt(req.message, state.profile)
     answer = llm.generate(prompt)
-    '''
-    turn = TurnLog(
-        t=datetime.utcnow().isoformat(),
-        user=req.message,
-        prompt_sent=prompt,
-        answer=answer,
-    )
-    '''
 
-    #state.turns.append(turn)
     state.turns.append(TurnLog(
         t=datetime.utcnow().isoformat(),
         user=req.message,
         prompt_sent=prompt,
         answer=answer,
     ))
+
+    # ✅ 当前条件轮数 +1
     state.turn_count_by_condition[condition] += 1
+    turns_in_cond = state.turn_count_by_condition[condition]
 
     return ChatResponse(
-        answer=answer, 
+        answer=answer,
         turn_index=len(state.turns),
-        did_switch=False,
+        active_condition=condition,
+        turn_in_condition=turns_in_cond,
+        need_switch=False,
         is_finished=False,
-        active_cpndition=condition,
-        )
+    )
+
 
 def _advance_condition(state: SessionState) -> bool:
     if state.active_condition_index < len(state.condition_sequence) - 1:
@@ -148,10 +154,7 @@ def feedback(session_id: str, req: FeedbackRequest):
         dS=req.d_structure,
         condition=condition,
     )
-
-    # 简单策略：每次 feedback 就切换到下一个 condition（最多3个）
-    #if state.active_condition_index < len(state.condition_sequence) - 1:
-     #   state.active_condition_index += 1
+    save_session(state)
 
     return FeedbackResponse(ok=True)
 
@@ -187,21 +190,44 @@ def get_state(session_id: str):
         }
     }
 
-@router.post("/study/{session_id}/next")
+@router.post("/study/{session_id}/next", response_model=NextResponse)
 def next_condition(session_id: str):
-    state = session_store.get(session_id)   # ✅ 改这里：store -> session_store
+    state = session_store.get(session_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Unknown session_id")
 
-    ok = _advance_condition(state)
-    if not ok:
-        return {"ok": True, "is_finished": True}
+    if _is_finished(state):
+        return NextResponse(is_finished=True, active_condition=None, active_condition_index=state.active_condition_index)
 
-    current = state.condition_sequence[state.active_condition_index]
-    return {
-        "ok": True,
-        "is_finished": False,
-        "active_condition_index": state.active_condition_index,
-        "active_condition": current,
-    }
+    current = _active_condition(state)
+
+    # 如果没被 max_turns 结束，那就是用户主动结束
+    if state.ended_reason_by_condition[current] is None:
+        state.ended_reason_by_condition[current] = "user_end"
+
+    ok = _advance_condition(state)
+    save_session(state)
+
+    if not ok:
+        return NextResponse(is_finished=True, active_condition=None, active_condition_index=state.active_condition_index)
+
+    new_cond = _active_condition(state)
+    return NextResponse(is_finished=False, active_condition=new_cond, active_condition_index=state.active_condition_index)
+
+
+
+def _is_finished(state: SessionState) -> bool:
+    return state.active_condition_index >= len(state.condition_sequence)
+
+def _active_condition(state: SessionState) -> str:
+    return state.condition_sequence[state.active_condition_index]
+
+def _advance_condition(state: SessionState) -> bool:
+    """切换到下一个条件。成功返回 True；没有下一个则进入 finished 并返回 False。"""
+    if state.active_condition_index < len(state.condition_sequence) - 1:
+        state.active_condition_index += 1
+        return True
+    state.active_condition_index = len(state.condition_sequence)
+    return False
+
 

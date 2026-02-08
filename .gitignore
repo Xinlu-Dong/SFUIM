@@ -10,3 +10,6 @@ venv/
 # OS / Editor
 .vscode/
 .DS_Store
+
+#User data
+backend/data/sessions/

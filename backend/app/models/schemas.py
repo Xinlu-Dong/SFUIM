@@ -23,6 +23,17 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     turn_index: int
+    # 前端控制用:
+    active_condition: Optional[str] = None#哪种模型
+    turn_in_condition: int = 0
+    need_switch: bool = False#是否切换模型
+    is_finished: bool = False#是否结束当前模型对话
+
+class NextResponse(BaseModel):
+    ok: bool = True
+    is_finished: bool
+    active_condition: Optional[str] = None
+    active_condition_index: int
 
 
 class FeedbackRequest(BaseModel):

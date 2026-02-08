@@ -20,12 +20,13 @@ class TurnLog:
 class SessionState:
     session_id: str
     system_label: str           # A/B/C 只给用户看
-    condition_sequence: List[str]  # 实际跑哪些条件（full/baseline/no_time/no_frequency）
+    condition_sequence: List[str]  # 实际跑哪些条件（full/baseline/no_time or no_frequency）
     active_condition_index: int
     # SFUIM profile & counters
     profile: Dict[str, Any]
     turns: List[TurnLog]
-    turn_count_by_condition: Dict[str, int]
+    turn_count_by_condition: Dict[str, int]#最多10轮对话
+    ended_reason_by_condition: Dict[str, Optional[str]]#用户结束对话原因
 
 
 class InMemoryStore:
