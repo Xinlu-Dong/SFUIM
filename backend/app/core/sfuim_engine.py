@@ -4,6 +4,8 @@ from math import exp, log
 from typing import Dict, Tuple
 
 
+
+
 def clip(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
 
@@ -26,6 +28,10 @@ def new_profile() -> Dict:
         "last_k": {"C": 0, "E": 0, "S": 0},   # κ_j^{last}
         "count": {"C": 0, "E": 0, "S": 0},    # c_j^(k)
         "k": 0,  # 当前轮次计数（每次feedback后+1）
+        "task": "",
+        "task_history": [],
+        "topic_ref": ""#上一轮用户消息（或上一轮“认为是同主题”的消息）
+
     }
 
 
@@ -42,16 +48,18 @@ def map_slot_to_text(theta: Dict[str, float]) -> Tuple[str, str, str]:
     else:
         complexity_text = "难度适中，先给整体直观解释，再补充必要细节。"
 
-    if e < 0.2:
+    if e < 0:
+        examples_text = "不需要例子"
+    elif e < 0.2:
         examples_text = "可以只用 0–1 个简单例子。"
     elif e > 0.6:
         examples_text = "请至少给出 2 个贴近实际场景的例子。"
     else:
         examples_text = "请给出 1–2 个代表性的例子。"
 
-    if s < 0.2:
-        structure_text = "可以采用自然段落的形式回答。"
-    elif s > 0.6:
+    if s < -0.5:
+        structure_text = "可以采用自然段落的形式回答。风格偏向叙述性"
+    elif s > 0.5:
         structure_text = "请使用清晰的小标题和分点结构组织回答。"
     else:
         structure_text = "建议使用分点结构回答。"
@@ -70,6 +78,10 @@ def render_prompt(task: str, profile: Dict) -> str:
         f"[TASK] {task}\n\n"
         "[OUTPUT] 请用中文回答；保证内容准确，条理清晰。\n"
     )
+
+def render_baseline_prompt(user_message: str) -> str:
+    # baseline：固定模板，不读取 profile
+    return user_message
 
 
 def update_profile(
