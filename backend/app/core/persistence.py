@@ -3,8 +3,9 @@ import os
 from dataclasses import asdict
 from datetime import datetime
 from typing import Any
+import copy
+from app.core.storage import SessionState, TurnLog, InMemoryStore
 
-from app.core.storage import SessionState, TurnLog
 
 
 
@@ -46,7 +47,7 @@ def _migrate_profile(data: dict) -> dict:
     if "profile" in data:
         # 把旧的共享 profile “复制”给每个 condition（或只给当前 active）
         seq = data.get("condition_sequence", [])
-        return {c: data["profile"] for c in seq}
+        return {c: copy.deepcopy(data["profile"]) for c in seq}
     # 最坏情况：没有任何 profile 字段
     return {}
 
@@ -73,13 +74,12 @@ def load_session(session_id: str) -> SessionState | None:
         turns=turns,
         turn_count_by_condition=data["turn_count_by_condition"],
         ended_reason_by_condition=data["ended_reason_by_condition"],
-        topic_mode=data.get("topic_mode", "detect"),
     )
 
     return state
 
 
-def restore_all_sessions(session_store) -> None:
+def restore_all_sessions(session_store: InMemoryStore) -> None:
     """
     启动时扫描 sessions 目录，恢复所有 session 到内存
     """

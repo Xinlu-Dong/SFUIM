@@ -13,5 +13,17 @@ venv/
 
 #User data
 backend/data/sessions/
+backend/.env
+backend/data/label_counts_dev.json
+backend/data/*.json
 
 .github/
+
+# Node / Vue
+frontend/node_modules/
+frontend/dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/

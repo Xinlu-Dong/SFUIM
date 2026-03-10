@@ -1,13 +1,15 @@
 from __future__ import annotations
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from typing import Literal
+
+Condition = Literal["full", "baseline", "no_time", "no_frequency"]
 
 
 @dataclass
 class TurnLog:
     t: str
-    condition: str
+    condition: Condition
     user: str
     prompt_sent: str
     answer: str
@@ -16,29 +18,19 @@ class TurnLog:
     d_examples: Optional[int] = None
     d_structure: Optional[int] = None
 
-    # ✅ topic debug（detect_only）
-    topic_mode : Optional[str] = None # "off" | "detect" | "update"
-    topic_ref: Optional[str] = None         # reference used for drift detection (e.g., previous user msg)
-    topic_drift: Optional[bool] = None        # 是否疑似换题
-    topic_sim: Optional[float] = None         # jaccard 相似度（可能为 None）
-    topic_threshold: Optional[float] = None   # 阈值
-    topic_reason: Optional[str] = None        # "empty_task" / "jaccard"
-
 
 @dataclass
 class SessionState:
     session_id: str
-    system_label: str           # A/B/C 只给用户看
-    condition_sequence: List[str]  # 实际跑哪些条件（full/baseline/no_time or no_frequency）
+    system_label: str           # A/B/C/D 是4种顺序组标签，表示参与者被分配到那一组系统顺序
+    condition_sequence: List[Condition]  # 实际跑哪些条件（full/baseline/no_time/ no_frequency）
     active_condition_index: int
-    # SFUIM profile & counters
-    #profile: Dict[str, Any] 为了避免不同系统共用同一个Profile，把这个改成下面一行：
-    profiles_by_condition: Dict[str, Dict[str, Any]] #每个 condition 一个 profile
+    profiles_by_condition: Dict[Condition, Dict[str, Any]] #每个 condition 一个 profile
     turns: List[TurnLog]
-    turn_count_by_condition: Dict[str, int]#最多10轮对话
-    ended_reason_by_condition: Dict[str, Optional[str]]#用户结束对话原因
-    topic_mode: str = "detect"  # "off" | "detect" | "update"
-
+    turn_count_by_condition: Dict[Condition, int]#最多10轮对话
+    ended_reason_by_condition: Dict[Condition, Optional[str]]#每个系统结束的原因：10轮已满 or 提前结束
+    
+    
 
 
 class InMemoryStore:

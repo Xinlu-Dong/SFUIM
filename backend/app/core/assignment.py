@@ -12,19 +12,26 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 _lock = threading.Lock()
 
 
+LATIN_SQUARE_SEQUENCES = {
+    "A": ["full", "baseline", "no_time", "no_frequency"],
+    "B": ["baseline", "no_time", "no_frequency", "full"],
+    "C": ["no_time", "no_frequency", "full", "baseline"],
+    "D": ["no_frequency", "full", "baseline", "no_time"],
+}
+
 def _read_counts(path: str) -> Dict[str, int]:
     os.makedirs(DATA_DIR, exist_ok=True)
 
     if not os.path.exists(path):
-        return {"A": 0, "B": 0, "C": 0}
+        return {"A": 0, "B": 0, "C": 0, "D": 0}
 
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    for k in ["A", "B", "C"]:
+    for k in ["A", "B", "C", "D"]:
         data.setdefault(k, 0)
 
-    return {k: int(data[k]) for k in ["A", "B", "C"]}
+    return {k: int(data[k]) for k in ["A", "B", "C", "D"]}
 
 
 
@@ -49,6 +56,8 @@ def assign_system_label_balanced(dev_mode: bool = False) -> str:
 
         return label
 
+def get_condition_sequence_for_label(label: str) -> list[str]:
+    return LATIN_SQUARE_SEQUENCES[label]
 
 def get_label_counts(dev_mode: bool = False) -> Dict[str, int]:
     with _lock:

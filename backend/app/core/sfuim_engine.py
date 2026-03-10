@@ -28,55 +28,53 @@ def new_profile() -> Dict:
         "last_k": {"C": 0, "E": 0, "S": 0},   # κ_j^{last}
         "count": {"C": 0, "E": 0, "S": 0},    # c_j^(k)
         "k": 0,  # 当前轮次计数（每次feedback后+1）
-        "task": "",
-        "task_history": [],
-        "topic_ref": ""#上一轮用户消息（或上一轮“认为是同主题”的消息）
-
     }
 
 
 def map_slot_to_text(theta: Dict[str, float]) -> Tuple[str, str, str]:
-    # 你文档里的离散化映射（可后续精调）:contentReference[oaicite:8]{index=8}
     c = theta["C"]
     e = theta["E"]
     s = theta["S"]
 
     if c < -0.4:
-        complexity_text = "请用非常通俗的方式解释，尽量避免专业术语。"
+        complexity_text = "Explain in a very simple and beginner-friendly way. Avoid heavy jargon."
     elif c > 0.4:
-        complexity_text = "可以进行较深入的技术分析，包括原理与实现细节。"
+        complexity_text = "Provide a deeper technical explanation, including principles and implementation details where useful."
     else:
-        complexity_text = "难度适中，先给整体直观解释，再补充必要细节。"
+        complexity_text = "Keep the explanation at a moderate level: start intuitive, then add necessary detail."
 
     if e < 0:
-        examples_text = "不需要例子"
+        examples_text = "Use few or no examples unless truly necessary."
     elif e < 0.2:
-        examples_text = "可以只用 0–1 个简单例子。"
+        examples_text = "Use at most one simple example if it helps."
     elif e > 0.6:
-        examples_text = "请至少给出 2 个贴近实际场景的例子。"
+        examples_text = "Include at least two practical and concrete examples."
     else:
-        examples_text = "请给出 1–2 个代表性的例子。"
+        examples_text = "Include one or two representative examples."
 
     if s < -0.5:
-        structure_text = "可以采用自然段落的形式回答。风格偏向叙述性"
+        structure_text = "A natural paragraph style is acceptable. The tone can be slightly narrative."
     elif s > 0.5:
-        structure_text = "请使用清晰的小标题和分点结构组织回答。"
+        structure_text = "Use a clearly structured answer with headings and bullet points where appropriate."
     else:
-        structure_text = "建议使用分点结构回答。"
+        structure_text = "Prefer a clear, moderately structured answer."
 
     return complexity_text, examples_text, structure_text
 
-
-def render_prompt(task: str, profile: Dict) -> str:
-    # 你文档里的模板 :contentReference[oaicite:9]{index=9}
+def render_prompt(user_message: str, profile: Dict) -> str:
     complexity_text, examples_text, structure_text = map_slot_to_text(profile["theta"])
+
     return (
-        "[ROLE] 你是一名面向初学者的专业助教。\n\n"
-        f"[TONE] {complexity_text}\n"
-        f"       {examples_text}\n"
-        f"       {structure_text}\n\n"
-        f"[TASK] {task}\n\n"
-        "[OUTPUT] 请用中文回答；保证内容准确，条理清晰。\n"
+        "[ROLE] You are a professional teaching assistant helping a beginner learner.\n\n"
+        f"[STYLE]\n"
+        f"- {complexity_text}\n"
+        f"- {examples_text}\n"
+        f"- {structure_text}\n\n"
+        f"[USER QUESTION]\n{user_message}\n\n"
+        "[OUTPUT REQUIREMENTS]\n"
+        "- Answer in English.\n"
+        "- Be accurate, clear, and helpful.\n"
+        "- Directly answer the user's question first.\n"
     )
 
 def render_baseline_prompt(user_message: str) -> str:
@@ -96,7 +94,7 @@ def update_profile(
     """
     condition:
       - full: 四因子全开
-      - baseline: 不更新（固定prompt）
+      - baseline: 用户原话直接作为 prompt，不进行任何风格调整
       - no_time: T=1
       - no_frequency: F=1
     """

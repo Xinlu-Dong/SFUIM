@@ -1,0 +1,29 @@
+.waves-bg {
+  position: relative;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.waves-bg::before,
+.waves-bg::after {
+  content: "";
+  position: absolute;
+  left: -10%;
+  width: 120%;
+  height: 55%;
+  border-radius: 9999px;
+  filter: saturate(1.1);
+}
+
+.waves-bg::before {
+  top: 18%;
+  background: #3b3f98; /* 深蓝 */
+  transform: rotate(-6deg);
+}
+
+.waves-bg::after {
+  top: 48%;
+  background: #0ea5e9; /* 浅蓝 */
+  transform: rotate(4deg);
+  opacity: 0.95;
+}

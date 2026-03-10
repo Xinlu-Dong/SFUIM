@@ -2,8 +2,7 @@ from fastapi import APIRouter, HTTPException
 from uuid import uuid4
 from datetime import datetime
 import random
-
-
+import os
 
 from app.models.schemas import (
     StartStudyRequest, StartStudyResponse,
@@ -13,34 +12,21 @@ from app.models.schemas import (
 )
 from app.core.storage import SessionState, TurnLog, session_store
 from app.core.sfuim_engine import SFUIMConfig, new_profile, render_prompt, update_profile, render_baseline_prompt
-from app.core.llm_interface import DummyLLM
+from app.core.llm_interface import get_llm
 from app.core.persistence import save_session
-from app.core.assignment import assign_system_label_balanced, get_label_counts
-from app.core.topic_handler import detect_new_topic, update_task_state
+from app.core.assignment import assign_system_label_balanced, get_label_counts, get_condition_sequence_for_label
+#from app.core.topic_handler import detect_new_topic, update_task_state
 
 
 router = APIRouter()
 cfg = SFUIMConfig()
-llm = DummyLLM()
+#llm = DummyLLM()
+llm = get_llm()
+print("LLM_BACKEND =", os.getenv("LLM_BACKEND"))
+print("OLLAMA_BASE_URL =", os.getenv("OLLAMA_BASE_URL"))
 MAX_TURNS_PER_CONDITION = 10
 
 DEV_MODE = True #这个是为了让我自主控制模型类型设置了，到真实实验阶段这个要改成False
-
-
-def make_condition_sequence() -> list[str]:
-    """
-    每人用 3 种系统：full + baseline + (no_time or no_frequency)
-    第三个条件随机；顺序随机，降低顺序效应。
-    """
-    third = random.choice(["no_time", "no_frequency"])
-    seq = ["full", "baseline", third]
-    random.shuffle(seq)
-    return seq
-
-
-def assign_system_label() -> str:
-    # 注意：你现在是随机 A/B/C，但并不保证均衡
-    return random.choice(["A", "B", "C"])
 
 @router.post("/dev/force_condition")
 def force_condition(session_id: str, condition: str):
@@ -76,7 +62,7 @@ def dev_label_counts():
 def start_study(req: StartStudyRequest):
     sid = uuid4().hex
     label = assign_system_label_balanced(dev_mode=DEV_MODE)
-    seq = make_condition_sequence()
+    seq = get_condition_sequence_for_label(label)
 
     state = SessionState(
         session_id=sid,
@@ -103,7 +89,7 @@ def chat(session_id: str, req: ChatRequest):
 
     if _is_finished(state):
         return ChatResponse(
-            answer="本次实验已完成，感谢参与！",
+            answer="This study session is complete. Thank you for your participation!",
             turn_index=len(state.turns),
             active_condition=None,
             turn_in_condition=0,
@@ -120,7 +106,7 @@ def chat(session_id: str, req: ChatRequest):
         state.ended_reason_by_condition[condition] = "max_turns"
         save_session(state)
         return ChatResponse(
-            answer="该阶段已达到最大对话轮数（10轮）。请点击“结束对话”进入下一系统。",
+            answer="This system has reached the maximum number of dialogue turns (10). Please click 'End and continue' to move to the next system.",
             turn_index=len(state.turns),
             active_condition=condition,
             turn_in_condition=turns_in_cond,
@@ -128,12 +114,6 @@ def chat(session_id: str, req: ChatRequest):
             is_finished=False,
         )
     
-   # 取 session topic_mode（默认 detect）
-    topic_mode = getattr(state, "topic_mode", "detect")  # "off" | "detect" | "update"
-
-    topic_dbg = None
-    topic_ref = profile.get("topic_ref", "")
-
     # 正常生成 prompt & answer
     if condition == "baseline":
         print("USING BASELINE PROMPT")
@@ -142,47 +122,7 @@ def chat(session_id: str, req: ChatRequest):
         print("USING SFUIM PROMPT")
         prompt = render_prompt(req.message, profile)
 
-    # 2) topic handler（不影响 prompt）
-    if topic_mode != "off":
-        if topic_mode == "detect":
-            drift, det = detect_new_topic(
-                user_msg=req.message,
-                current_task=topic_ref,
-                jaccard_threshold=0.25,
-            )
-            topic_dbg = {
-                "mode": "detect",
-                "ref": topic_ref,
-                "drift": drift,
-                "det": det,
-            }
-            # ✅ 更新 reference：滑动窗口
-            profile["topic_ref"] = req.message
-
-        elif topic_mode == "update":
-            # 你想要的“可选更新 topic 状态”接口：
-            # update_task_state 会维护 profile["task"] / task_history 等
-            profile, upd_dbg = update_task_state(
-                profile,
-                req.message,
-                jaccard_threshold=0.25,
-                keep_history=True,
-            )
-            # 同时也做 drift 判定（以 topic_ref 或 profile["task"] 为基准都行）
-            drift, det = detect_new_topic(
-                user_msg=req.message,
-                current_task=topic_ref,
-                jaccard_threshold=0.25,
-            )
-            topic_dbg = {
-                "mode": "update",
-                "ref": topic_ref,
-                "drift": drift,
-                "det": det,
-                "update": upd_dbg,
-            }
-            profile["topic_ref"] = req.message
-            
+    
     state.profiles_by_condition[condition] = profile
     answer = llm.generate(prompt)
 
@@ -192,13 +132,6 @@ def chat(session_id: str, req: ChatRequest):
         user=req.message,
         prompt_sent=prompt,
         answer=answer,
-        # ✅ topic debug fields（baseline 会是 None）
-        topic_mode=(topic_dbg["mode"] if topic_dbg else None),
-        topic_ref=(topic_dbg["ref"] if topic_dbg else None),
-        topic_drift=(topic_dbg["drift"] if topic_dbg else None),
-        topic_sim=(topic_dbg["det"].get("sim") if topic_dbg else None),
-        topic_threshold=(topic_dbg["det"].get("threshold") if topic_dbg else None),
-        topic_reason=(topic_dbg["det"].get("reason") if topic_dbg else None),
     ))
 
     # ✅ 当前条件轮数 +1
@@ -306,8 +239,8 @@ def next_condition(session_id: str):
         state.ended_reason_by_condition[current] = "user_end"
 
     ok = _advance_condition(state)
-    
     if not ok:
+        save_session(state)
         return NextResponse(is_finished=True, active_condition=None, active_condition_index=state.active_condition_index)
 
     new_cond = _active_condition(state)

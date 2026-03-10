@@ -3,7 +3,7 @@ from typing import List, Literal, Optional
 from datetime import datetime
 
 
-SystemLabel = Literal["A", "B", "C"]
+SystemLabel = Literal["A", "B", "C", "D"]  # 只给用户看，和 condition 不一一对应，
 Condition = Literal["full", "baseline", "no_time", "no_frequency"]
 
 
@@ -24,7 +24,7 @@ class ChatResponse(BaseModel):
     answer: str
     turn_index: int
     # 前端控制用:
-    active_condition: Optional[str] = None#哪种模型
+    active_condition: Optional[Condition] = None#哪种模型
     turn_in_condition: int = 0
     need_switch: bool = False#是否切换模型
     is_finished: bool = False#是否结束当前模型对话
@@ -32,7 +32,7 @@ class ChatResponse(BaseModel):
 class NextResponse(BaseModel):
     ok: bool = True
     is_finished: bool
-    active_condition: Optional[str] = None
+    active_condition: Optional[Condition] = None
     active_condition_index: int
 
 
