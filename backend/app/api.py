@@ -15,8 +15,7 @@ from app.core.sfuim_engine import SFUIMConfig, new_profile, render_prompt, updat
 from app.core.llm_interface import get_llm
 from app.core.persistence import save_session
 from app.core.assignment import assign_system_label_balanced, get_label_counts, get_condition_sequence_for_label
-#from app.core.topic_handler import detect_new_topic, update_task_state
-
+from app.core.topic_assignment import assign_topic_label_balanced, build_topic_sequence
 
 router = APIRouter()
 cfg = SFUIMConfig()
@@ -26,7 +25,7 @@ print("LLM_BACKEND =", os.getenv("LLM_BACKEND"))
 print("OLLAMA_BASE_URL =", os.getenv("OLLAMA_BASE_URL"))
 MAX_TURNS_PER_CONDITION = 10
 
-DEV_MODE = True #这个是为了让我自主控制模型类型设置了，到真实实验阶段这个要改成False
+DEV_MODE = False #这个是为了让我自主控制模型类型设置了，到真实实验阶段这个要改成False
 
 @router.post("/dev/force_condition")
 def force_condition(session_id: str, condition: str):
@@ -57,28 +56,44 @@ def dev_label_counts():
 
 
 
-
 @router.post("/study/start", response_model=StartStudyResponse)
 def start_study(req: StartStudyRequest):
     sid = uuid4().hex
+
+    # system order (existing)
     label = assign_system_label_balanced(dev_mode=DEV_MODE)
     seq = get_condition_sequence_for_label(label)
+
+    # NEW: topic order (independent from system order)
+    topic_order_label = assign_topic_label_balanced(dev_mode=DEV_MODE)
+    topic_sequence = build_topic_sequence(topic_order_label)
 
     state = SessionState(
         session_id=sid,
         system_label=label,
         condition_sequence=seq,
         active_condition_index=0,
+
+        topic_order_label=topic_order_label,
+        topic_sequence=topic_sequence,
+
         profiles_by_condition={c: new_profile() for c in seq},
         turns=[],
         turn_count_by_condition={c: 0 for c in seq},
         ended_reason_by_condition={c: None for c in seq},
     )
 
-    # ✅ 关键：统一用 session_store（不要用 store）
     session_store.create_session(state)
-    save_session(state) 
-    return StartStudyResponse(session_id=sid, system_label=label)
+    save_session(state)
+
+    current_topic = topic_sequence[0]
+    return StartStudyResponse(
+        session_id=sid,
+        system_label=label,
+        active_condition_index=0,
+        current_topic_id=current_topic["id"],
+        current_topic_title=current_topic["title"],
+    )
 
 
 @router.post("/study/{session_id}/chat", response_model=ChatResponse)
@@ -126,9 +141,12 @@ def chat(session_id: str, req: ChatRequest):
     state.profiles_by_condition[condition] = profile
     answer = llm.generate(prompt)
 
+    current_topic = state.topic_sequence[state.active_condition_index]
     state.turns.append(TurnLog(
         t=datetime.utcnow().isoformat(),
         condition=condition,
+        topic_id=current_topic["id"],
+        topic_title=current_topic["title"],
         user=req.message,
         prompt_sent=prompt,
         answer=answer,
@@ -194,27 +212,38 @@ def get_state(session_id: str):
     state = session_store.get(session_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Unknown session_id")
+
     is_finished = state.active_condition_index >= len(state.condition_sequence)
+
     active_condition = None
+    current_topic = None
+
     if not is_finished:
         active_condition = state.condition_sequence[state.active_condition_index]
+        current_topic = state.topic_sequence[state.active_condition_index]
 
     active_profile = None if active_condition is None else state.profiles_by_condition.get(active_condition)
 
-    # ✅ 你的 SessionState 里没有 turn_index/style_vector/satisfaction/time/frequency 这些字段
-    # ✅ 正确返回：turn_count + active_condition + profile（里面才有你存的四因子/风格向量）
     return {
         "session_id": state.session_id,
         "system_label": state.system_label,
         "is_finished": is_finished,
         "active_condition_index": state.active_condition_index,
         "active_condition": active_condition,
+
+        # NEW
+        "topic_order_label": state.topic_order_label,
+        "current_topic_id": None if current_topic is None else current_topic["id"],
+        "current_topic_title": None if current_topic is None else current_topic["title"],
+
         "active_profile": active_profile,
         "turn_count_by_condition": state.turn_count_by_condition,
         "turn_count_total": len(state.turns),
         "last_turn": None if not state.turns else {
             "t": state.turns[-1].t,
             "condition": state.turns[-1].condition,
+            "topic_id": state.turns[-1].topic_id,
+            "topic_title": state.turns[-1].topic_title,
             "user": state.turns[-1].user,
             "rating": state.turns[-1].rating,
             "d_complexity": state.turns[-1].d_complexity,
@@ -230,7 +259,13 @@ def next_condition(session_id: str):
         raise HTTPException(status_code=404, detail="Unknown session_id")
 
     if _is_finished(state):
-        return NextResponse(is_finished=True, active_condition=None, active_condition_index=state.active_condition_index)
+        return NextResponse(
+            is_finished=True,
+            active_condition=None,
+            active_condition_index=state.active_condition_index,
+            current_topic_id=None,
+            current_topic_title=None,
+        )
 
     current = _active_condition(state)
 
@@ -241,13 +276,27 @@ def next_condition(session_id: str):
     ok = _advance_condition(state)
     if not ok:
         save_session(state)
-        return NextResponse(is_finished=True, active_condition=None, active_condition_index=state.active_condition_index)
+        return NextResponse(
+            is_finished=True,
+            active_condition=None,
+            active_condition_index=state.active_condition_index,
+            current_topic_id=None,
+            current_topic_title=None,
+        )
 
     new_cond = _active_condition(state)
     state.profiles_by_condition.setdefault(new_cond, new_profile())
-    save_session(state)
-    return NextResponse(is_finished=False, active_condition=new_cond, active_condition_index=state.active_condition_index)
 
+    new_topic = state.topic_sequence[state.active_condition_index]
+
+    save_session(state)
+    return NextResponse(
+        is_finished=False,
+        active_condition=new_cond,
+        active_condition_index=state.active_condition_index,
+        current_topic_id=new_topic["id"],
+        current_topic_title=new_topic["title"],
+    )
 
 
 def _is_finished(state: SessionState) -> bool:

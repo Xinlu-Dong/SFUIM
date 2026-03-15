@@ -1,6 +1,6 @@
 <template>
   <div class="flex h-full flex-col">
-    <div class="flex-1 overflow-auto p-4">
+    <div class="min-h-0 flex-1 overflow-auto p-4">
       <div class="mx-auto flex w-full max-w-4xl flex-col gap-3">
         <MessageBubble v-for="m in messages" :key="m.id" :role="m.role" :text="m.text" />
         <div v-if="isSending" class="text-center text-xs text-gray-500">Generating response…</div>

@@ -11,8 +11,8 @@
           <p>If you are satisfied, you can end the conversation early and proceed to the next system interaction.</p>
         </div>
 
-        <button class="mt-8 rounded-lg bg-sky-600 px-6 py-2 text-white" @click="goChat">
-          Enter Chat
+        <button class="mt-8 rounded-lg bg-sky-600 px-6 py-2 text-white" @click="goTopic">
+          Continue
         </button>
       </div>
     </div>
@@ -28,12 +28,12 @@ import TopBar from "@/components/TopBar.vue";
 const router = useRouter();
 const store = useStudyStore();
 
-async function goChat() {
-  await router.push("/chat");
+async function goTopic() {
+  await router.push("/topic");
 }
 
 async function exit() {
-  // 简单返回封面（真实实验可改为“确认退出”）
+  store.clearSession();
   await router.push("/");
 }
 </script>

@@ -3,33 +3,48 @@
     <div class="rounded-lg bg-white p-3 shadow">
       <div class="mb-2 text-sm font-semibold">Rating Panel</div>
 
+      <!-- Overall rating -->
       <div class="mb-2 text-xs text-gray-600">Overall Satisfaction (-5 ~ +5)</div>
       <div class="flex items-center gap-2">
-        <input type="range" min="-5" max="5" step="1" v-model.number="local.rating" class="w-full" />
-        <div class="w-10 text-right text-sm font-semibold">{{ local.rating }}</div>
+        <input
+          type="range"
+          min="-5"
+          max="5"
+          step="1"
+          v-model.number="local.rating"
+          class="w-full"
+        />
+        <div class="w-10 text-right text-sm font-semibold">
+          {{ local.rating > 0 ? `+${local.rating}` : local.rating }}
+        </div>
       </div>
 
-      <div class="mt-4 text-xs text-gray-600">Style Preference (Three-dimensional: -1 / 0 / +1)</div>
+      <!-- CES sliders -->
+      <div class="mt-4 text-xs text-gray-600">
+        Style Preference (continuous feedback from -1.0 to +1.0)
+      </div>
 
-      <TriRow
+      <SliderRow
         title="Complexity"
         left="Simpler"
-        mid=" Just Right"
-        right="Deeper"
+        center="Just right"
+        right="More advanced"
         v-model="local.d_complexity"
       />
-      <TriRow
+
+      <SliderRow
         title="Examples"
-        left="Fewer Examples"
-        mid="Just Right"
-        right="More Examples"
+        left="Fewer examples"
+        center="Just right"
+        right="More examples"
         v-model="local.d_examples"
       />
-      <TriRow
+
+      <SliderRow
         title="Structure"
-        left="More Free-form"
-        mid="Just Right"
-        right="More Structured"
+        left="Less structured"
+        center="Just right"
+        right="More structured"
         v-model="local.d_structure"
       />
 
@@ -57,12 +72,12 @@
 
 <script setup lang="ts">
 import { computed, reactive, watch } from "vue";
-import TriRow from "./TriRow.vue";
+import SliderRow from "./SliderRow.vue";
 import type { FeedbackDraft } from "@/store/study";
 
 const props = defineProps<{
   modelValue: FeedbackDraft;
-  enabled: boolean; // 只有 pendingFeedback=true 时启用提交
+  enabled: boolean;
 }>();
 
 const emit = defineEmits<{

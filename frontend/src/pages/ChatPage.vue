@@ -2,27 +2,40 @@
   <div class="flex h-full flex-col" style="min-height: 100vh;">
     <TopBar :systemIndex="store.systemIndex" :systemLabel="store.systemLabel" @exit="exit" />
 
-    <div class="flex flex-1 bg-gray-50">
+    <div class="flex flex-1 overflow-hidden bg-gray-50">
       <!-- 左侧评分栏 -->
       <div class="w-[320px] shrink-0 border-r bg-sky-100">
-        <RatingPanel
-          v-model="store.feedback"
-          :enabled="store.pendingFeedback"
-          @submit="submitFeedback"
-          @end="endAndNext"
-        />
+        <div class="sticky top-4 p-4">
+          <RatingPanel
+            v-model="store.feedback"
+            :enabled="store.pendingFeedback"
+            @submit="submitFeedback"
+            @end="endAndNext"
+          />
+        </div>
       </div>
 
       <!-- 右侧聊天区 -->
-      <div class="flex-1">
-        <ChatWindow
-          :messages="store.messages"
-          :disabled="store.isSending || store.pendingFeedback || store.lastNeedSwitch || store.isFinishedAll"
-          :isSending="store.isSending"
-          :needFeedback="store.pendingFeedback"
-          :needSwitch="store.lastNeedSwitch"
-          @send="send"
-        />
+      <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div class="border-b bg-white px-6 py-4">
+          <div class="text-xs font-semibold uppercase tracking-wide text-sky-700">
+            Current Topic
+          </div>
+          <div class="mt-1 text-sm text-gray-800">
+            {{ store.currentTopicTitle }}
+          </div>
+        </div>
+
+        <div class="min-h-0 flex-1">
+          <ChatWindow
+            :messages="store.messages"
+            :disabled="store.isSending || store.pendingFeedback || store.lastNeedSwitch || store.isFinishedAll"
+            :isSending="store.isSending"
+            :needFeedback="store.pendingFeedback"
+            :needSwitch="store.lastNeedSwitch"
+            @send="send"
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -108,15 +121,21 @@ async function endAndNext() {
     const res = await nextSystem(store.sessionId);
 
     if (res.is_finished) {
-      store.isFinishedAll = true;
-      alert("This study is complete. Thank you for your participation!");
-      await router.push("/");
-      return;
-    }
+    store.isFinishedAll = true;
+    alert("This study is complete. Thank you for your participation!");
+    store.clearSession();
+    await router.push("/");
+    return;
+  }
 
-    store.systemIndex = Math.min(store.systemIndex + 1, 3);
-    store.resetConversationForNextSystem();
-    await router.push("/start");
+  store.setCurrentTopic({
+    activeConditionIndex: res.active_condition_index,
+    currentTopicId: res.current_topic_id ?? "",
+    currentTopicTitle: res.current_topic_title ?? ""
+  });
+
+  store.resetConversationForNextSystem();
+  await router.push("/topic");
   } catch (e: any) {
     alert(`Failed to switch system: ${e.message}`);
   }

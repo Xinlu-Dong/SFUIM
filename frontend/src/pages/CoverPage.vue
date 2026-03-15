@@ -58,11 +58,15 @@ function openConsent() {
 
 async function start() {
   const res = await startStudy();
-  store.sessionId = res.session_id;
-  store.systemLabel = res.system_label;
-  store.systemIndex = 0;
-  store.isFinishedAll = false;
-  store.resetConversationForNextSystem();
+
+  store.startSession({
+    sessionId: res.session_id,
+    systemLabel: res.system_label,
+    activeConditionIndex: res.active_condition_index,
+    currentTopicId: res.current_topic_id,
+    currentTopicTitle: res.current_topic_title
+  });
+
   await router.push("/start");
 }
 </script>

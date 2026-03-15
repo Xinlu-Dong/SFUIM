@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import CoverPage from "@/pages/CoverPage.vue";
 import ConsentPage from "@/pages/ConsentPage.vue";
 import ChatStartPage from "@/pages/ChatStartPage.vue";
+import TopicPage from "@/pages/TopicPage.vue";
 import ChatPage from "@/pages/ChatPage.vue";
 
 export const router = createRouter({
@@ -9,7 +10,8 @@ export const router = createRouter({
   routes: [
     { path: "/", component: CoverPage },
     { path: "/consent", component: ConsentPage },
-    { path: "/start", component: ChatStartPage },
+    { path: "/start", component: ChatStartPage }, // Instructions
+    { path: "/topic", component: TopicPage },     // NEW
     { path: "/chat", component: ChatPage }
   ]
 });

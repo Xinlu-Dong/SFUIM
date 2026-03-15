@@ -4,8 +4,6 @@ from math import exp, log
 from typing import Dict, Tuple
 
 
-
-
 def clip(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
 
@@ -16,18 +14,18 @@ class SFUIMConfig:
     eta: float = 0.18      # 学习率 η
     lambd: float = 0.22    # 时间衰减 λ
     gamma: float = 0.10    # 满意度头平滑 γ
+    alpha: float = 1.0     # Frequency 因子系数 α
 
 
 def new_profile() -> Dict:
     # θ_C, θ_E, θ_S ∈ [-1,1], s ∈ [0,1]
-    #C: Complexity; E: Examples; S: Structure
-    #s: 初始满意度头
+    # C: Complexity; E: Examples; S: Structure
     return {
         "theta": {"C": 0.0, "E": 0.0, "S": 0.0},
         "s": 0.5,
         "last_k": {"C": 0, "E": 0, "S": 0},   # κ_j^{last}
-        "count": {"C": 0, "E": 0, "S": 0},    # c_j^(k)
-        "k": 0,  # 当前轮次计数（每次feedback后+1）
+        "count": {"C": 0, "E": 0, "S": 0},    # c_{k,j}
+        "k": 0,  # 当前轮次计数（每次 feedback 后 +1）
     }
 
 
@@ -61,6 +59,7 @@ def map_slot_to_text(theta: Dict[str, float]) -> Tuple[str, str, str]:
 
     return complexity_text, examples_text, structure_text
 
+
 def render_prompt(user_message: str, profile: Dict) -> str:
     complexity_text, examples_text, structure_text = map_slot_to_text(profile["theta"])
 
@@ -77,6 +76,7 @@ def render_prompt(user_message: str, profile: Dict) -> str:
         "- Directly answer the user's question first.\n"
     )
 
+
 def render_baseline_prompt(user_message: str) -> str:
     # baseline：固定模板，不读取 profile
     return user_message
@@ -85,58 +85,76 @@ def render_baseline_prompt(user_message: str) -> str:
 def update_profile(
     cfg: SFUIMConfig,
     profile: Dict,
-    rating: int,
-    dC: int,
-    dE: int,
-    dS: int,
+    rating: float,
+    dC: float,
+    dE: float,
+    dS: float,
     condition: str,
 ) -> Dict:
     """
     condition:
       - full: 四因子全开
       - baseline: 用户原话直接作为 prompt，不进行任何风格调整
-      - no_time: T=1
-      - no_frequency: F=1
+      - no_time: 关闭时间衰减，rho = 1
+      - no_frequency: 关闭频率增强，F = 1
     """
     if condition == "baseline":
         return profile
 
+    # 当前更新轮次
     k = profile["k"] + 1
-    profile["k"] = k
 
-    # Level: L_k = r_k / R_max ; 我们用 |L_k| 控制步长 :contentReference[oaicite:10]{index=10}
-    L = rating / cfg.r_max
-    absL = abs(L)
+    # Level factor: A_k = |r_k| / R_max
+    A = abs(rating) / cfg.r_max
 
-    d = {"C": dC, "E": dE, "S": dS}
+    # 连续反馈 d_{k,j} ∈ [-1, 1]
+    d = {
+        "C": clip(float(dC), -1.0, 1.0),
+        "E": clip(float(dE), -1.0, 1.0),
+        "S": clip(float(dS), -1.0, 1.0),
+    }
+
+    # 保留旧 theta，避免本轮更新互相污染
+    old_theta = profile["theta"].copy()
 
     for j in ["C", "E", "S"]:
-        if d[j] == 0:
-            continue
-
-        # Time: T_{k,j} = exp(-λ Δk) :contentReference[oaicite:11]{index=11}
+        # Step 3: Time factor rho_{k,j}
         if condition == "no_time":
-            T = 1.0
+            rho = 1.0
         else:
-            delta_k = k - profile["last_k"][j]
-            T = exp(-cfg.lambd * delta_k)
+            if profile["count"][j] == 0:
+                # 该维此前从未收到过非零反馈
+                rho = 1.0
+            else:
+                delta_k = k - profile["last_k"][j]
+                rho = exp(-cfg.lambd * delta_k)
 
-        # Frequency: F_{k,j} = 1 + log(1 + c_j) :contentReference[oaicite:12]{index=12}
+        # Step 4: 对旧 profile 做时间衰减
+        decayed_theta = rho * old_theta[j]
+
+        # Step 5: Frequency factor
         if condition == "no_frequency":
             F = 1.0
         else:
-            c = profile["count"][j]
-            F = 1.0 + log(1.0 + c)
+            count = profile["count"][j]
+            F = 1.0 + cfg.alpha * log(1.0 + count)
 
-        delta_theta = cfg.eta * d[j] * absL * T * F
-        profile["theta"][j] = clip(profile["theta"][j] + delta_theta, -1.0, 1.0)
+        # Step 6: 当前轮增量（不再乘 Time）
+        delta_theta = cfg.eta * d[j] * A * F
 
-        # 更新 last 与 count
-        profile["last_k"][j] = k
-        profile["count"][j] += 1
+        # Step 7: 更新 profile
+        profile["theta"][j] = clip(decayed_theta + delta_theta, -1.0, 1.0)
 
-    # 满意度头 s_k：指数平滑（用于分析，不影响prompt）:contentReference[oaicite:13]{index=13}
+        # Step 8: 只有该维收到非零反馈时，才更新 last_k 和 count
+        if d[j] != 0:
+            profile["last_k"][j] = k
+            profile["count"][j] += 1
+
+    # Step 9: 满意度头 s_k 指数平滑
     score_norm = (rating + cfg.r_max) / (2 * cfg.r_max)  # [-5,5] -> [0,1]
     profile["s"] = (1 - cfg.gamma) * profile["s"] + cfg.gamma * score_norm
+
+    # 最后更新轮次
+    profile["k"] = k
 
     return profile

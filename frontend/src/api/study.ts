@@ -3,6 +3,9 @@ import { http } from "./http";
 export type StartStudyResponse = {
   session_id: string;
   system_label: "A" | "B" | "C" | "D";
+  active_condition_index: number;
+  current_topic_id: string;
+  current_topic_title: string;
 };
 
 export type ChatResponse = {
@@ -19,6 +22,8 @@ export type NextResponse = {
   is_finished: boolean;
   active_condition?: string | null;
   active_condition_index: number;
+  current_topic_id?: string | null;
+  current_topic_title?: string | null;
 };
 
 export async function startStudy(participantId?: string): Promise<StartStudyResponse> {

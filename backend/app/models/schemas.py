@@ -1,9 +1,8 @@
 from pydantic import BaseModel, Field
-from typing import List, Literal, Optional
-from datetime import datetime
+from typing import Literal, Optional
 
 
-SystemLabel = Literal["A", "B", "C", "D"]  # 只给用户看，和 condition 不一一对应，
+SystemLabel = Literal["A", "B", "C", "D"]  # 只给用户看，和 condition 不一一对应
 Condition = Literal["full", "baseline", "no_time", "no_frequency"]
 
 
@@ -14,6 +13,9 @@ class StartStudyRequest(BaseModel):
 class StartStudyResponse(BaseModel):
     session_id: str
     system_label: SystemLabel
+    active_condition_index: int
+    current_topic_id: str
+    current_topic_title: str
 
 
 class ChatRequest(BaseModel):
@@ -23,27 +25,30 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     turn_index: int
-    # 前端控制用:
-    active_condition: Optional[Condition] = None#哪种模型
+    # 前端控制用
+    active_condition: Optional[Condition] = None
     turn_in_condition: int = 0
-    need_switch: bool = False#是否切换模型
-    is_finished: bool = False#是否结束当前模型对话
+    need_switch: bool = False
+    is_finished: bool = False
+
 
 class NextResponse(BaseModel):
     ok: bool = True
     is_finished: bool
     active_condition: Optional[Condition] = None
     active_condition_index: int
+    current_topic_id: Optional[str] = None
+    current_topic_title: Optional[str] = None
 
 
 class FeedbackRequest(BaseModel):
     # 整体评分 r_k：[-5, 5]
     rating: int = Field(ge=-5, le=5)
 
-    # 三维 d_{k,j} in {-1,0,1}
-    d_complexity: int = Field(ge=-1, le=1)
-    d_examples: int = Field(ge=-1, le=1)
-    d_structure: int = Field(ge=-1, le=1)
+    # 三维连续反馈 d_{k,j} ∈ [-1, 1]
+    d_complexity: float = Field(ge=-1.0, le=1.0)
+    d_examples: float = Field(ge=-1.0, le=1.0)
+    d_structure: float = Field(ge=-1.0, le=1.0)
 
 
 class FeedbackResponse(BaseModel):
