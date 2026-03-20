@@ -50,3 +50,28 @@ export async function nextSystem(sessionId: string): Promise<NextResponse> {
   const res = await http.post<NextResponse>(`/study/${sessionId}/next`, {});
   return res.data;
 }
+
+
+export type PostStudyRequest = {
+  age_range: string;
+  gender: string;
+  education_level: string;
+  field_of_study: string;
+
+  easiest_system: string;
+  best_learning_match: string;
+  adaptation_rating: number;
+  confidence_rating: number;
+  use_again: string;
+
+  helpful_aspects: string;
+  improvement_suggestions: string;
+};
+
+export async function submitPostStudy(
+  sessionId: string,
+  payload: PostStudyRequest
+): Promise<{ ok: boolean }> {
+  const res = await http.post<{ ok: boolean }>(`/study/${sessionId}/post-study`, payload);
+  return res.data;
+}

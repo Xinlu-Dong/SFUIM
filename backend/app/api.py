@@ -8,14 +8,17 @@ from app.models.schemas import (
     StartStudyRequest, StartStudyResponse,
     ChatRequest, ChatResponse,
     FeedbackRequest, FeedbackResponse,
-    NextResponse
+    NextResponse, PostStudyRequest, PostStudyResponse,
 )
 from app.core.storage import SessionState, TurnLog, session_store
 from app.core.sfuim_engine import SFUIMConfig, new_profile, render_prompt, update_profile, render_baseline_prompt
 from app.core.llm_interface import get_llm
 from app.core.persistence import save_session
-from app.core.assignment import assign_system_label_balanced, get_label_counts, get_condition_sequence_for_label
-from app.core.topic_assignment import assign_topic_label_balanced, build_topic_sequence
+from app.core.assignment import (
+    assign_system_label_round_robin,
+    get_condition_sequence_for_label,
+    get_fixed_topic_sequence,
+)
 
 router = APIRouter()
 cfg = SFUIMConfig()
@@ -59,14 +62,10 @@ def dev_label_counts():
 @router.post("/study/start", response_model=StartStudyResponse)
 def start_study(req: StartStudyRequest):
     sid = uuid4().hex
-
-    # system order (existing)
-    label = assign_system_label_balanced(dev_mode=DEV_MODE)
+    # Assign system label (A/B/C/D) and topic
+    label = assign_system_label_round_robin(dev_mode=DEV_MODE)
     seq = get_condition_sequence_for_label(label)
-
-    # NEW: topic order (independent from system order)
-    topic_order_label = assign_topic_label_balanced(dev_mode=DEV_MODE)
-    topic_sequence = build_topic_sequence(topic_order_label)
+    topic_sequence = get_fixed_topic_sequence()
 
     state = SessionState(
         session_id=sid,
@@ -74,7 +73,6 @@ def start_study(req: StartStudyRequest):
         condition_sequence=seq,
         active_condition_index=0,
 
-        topic_order_label=topic_order_label,
         topic_sequence=topic_sequence,
 
         profiles_by_condition={c: new_profile() for c in seq},
@@ -231,8 +229,7 @@ def get_state(session_id: str):
         "active_condition_index": state.active_condition_index,
         "active_condition": active_condition,
 
-        # NEW
-        "topic_order_label": state.topic_order_label,
+        
         "current_topic_id": None if current_topic is None else current_topic["id"],
         "current_topic_title": None if current_topic is None else current_topic["title"],
 
@@ -297,6 +294,34 @@ def next_condition(session_id: str):
         current_topic_id=new_topic["id"],
         current_topic_title=new_topic["title"],
     )
+
+
+@router.post("/study/{session_id}/post-study", response_model=PostStudyResponse)
+def submit_post_study(session_id: str, req: PostStudyRequest):
+    state = session_store.get(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Unknown session_id")
+
+    # 必须先完成全部系统，才能提交结束问卷
+    if not _is_finished(state):
+        raise HTTPException(status_code=400, detail="Study not finished yet")
+
+    state.post_study = {
+        "age_range": req.age_range,
+        "gender": req.gender,
+        "education_level": req.education_level,
+        "field_of_study": req.field_of_study,
+        "easiest_system": req.easiest_system,
+        "best_learning_match": req.best_learning_match,
+        "adaptation_rating": req.adaptation_rating,
+        "confidence_rating": req.confidence_rating,
+        "use_again": req.use_again,
+        "helpful_aspects": req.helpful_aspects,
+        "improvement_suggestions": req.improvement_suggestions,
+    }
+
+    save_session(state)
+    return PostStudyResponse(ok=True)
 
 
 def _is_finished(state: SessionState) -> bool:

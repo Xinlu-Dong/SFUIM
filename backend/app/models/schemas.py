@@ -53,3 +53,24 @@ class FeedbackRequest(BaseModel):
 
 class FeedbackResponse(BaseModel):
     ok: bool = True
+
+
+class PostStudyRequest(BaseModel):
+    age_range: str
+    gender: str
+    education_level: str
+    field_of_study: str
+
+    easiest_system: str
+    best_learning_match: str
+
+    adaptation_rating: int = Field(ge=1, le=5)
+    confidence_rating: int = Field(ge=1, le=5)
+    use_again: str
+
+    helpful_aspects: Optional[str] = ""
+    improvement_suggestions: Optional[str] = ""
+
+
+class PostStudyResponse(BaseModel):
+    ok: bool = True

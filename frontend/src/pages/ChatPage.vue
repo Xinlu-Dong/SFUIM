@@ -111,7 +111,6 @@ async function submitFeedback(payload: any) {
 async function endAndNext() {
   if (!ensureSession()) return;
 
-  // 如果还没反馈，提醒先反馈（避免你后端日志缺字段）
   if (store.pendingFeedback) {
     alert("Please submit your feedback for this round before ending the conversation and proceeding to the next system.");
     return;
@@ -121,27 +120,27 @@ async function endAndNext() {
     const res = await nextSystem(store.sessionId);
 
     if (res.is_finished) {
-    store.isFinishedAll = true;
-    alert("This study is complete. Thank you for your participation!");
-    store.clearSession();
-    await router.push("/");
-    return;
-  }
+      store.isFinishedAll = true;
+      alert("You have completed all system interactions. Please complete the final questionnaire.");
+      await router.push(`/post-study?session_id=${store.sessionId}`);
+      return;
+    }
 
-  store.setCurrentTopic({
-    activeConditionIndex: res.active_condition_index,
-    currentTopicId: res.current_topic_id ?? "",
-    currentTopicTitle: res.current_topic_title ?? ""
-  });
+    store.setCurrentTopic({
+      activeConditionIndex: res.active_condition_index,
+      currentTopicId: res.current_topic_id ?? "",
+      currentTopicTitle: res.current_topic_title ?? ""
+    });
 
-  store.resetConversationForNextSystem();
-  await router.push("/topic");
+    store.resetConversationForNextSystem();
+    await router.push("/topic");
   } catch (e: any) {
     alert(`Failed to switch system: ${e.message}`);
   }
 }
 
 async function exit() {
+  store.clearSession();
   await router.push("/");
 }
 </script>

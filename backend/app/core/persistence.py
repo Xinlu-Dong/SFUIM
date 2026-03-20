@@ -95,7 +95,6 @@ def load_session(session_id: str) -> SessionState | None:
         )
 
     seq = data["condition_sequence"]
-    topic_order_label = data.get("topic_order_label", "A")
     topic_sequence = data.get("topic_sequence", [])
     raw_profiles = data["profiles_by_condition"]
 
@@ -111,12 +110,12 @@ def load_session(session_id: str) -> SessionState | None:
         system_label=data["system_label"],
         condition_sequence=seq,
         active_condition_index=data["active_condition_index"],
+        topic_sequence=topic_sequence,
         profiles_by_condition=profiles_by_condition,
         turns=turns,
         turn_count_by_condition=data["turn_count_by_condition"],
         ended_reason_by_condition=data["ended_reason_by_condition"],
-        topic_order_label=topic_order_label,
-        topic_sequence=topic_sequence,
+        post_study=data.get("post_study"),
     )
 
     return state

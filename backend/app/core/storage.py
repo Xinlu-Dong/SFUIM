@@ -1,10 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TypedDict
 from typing import Literal
 
 Condition = Literal["full", "baseline", "no_time", "no_frequency"]
 
+class TopicItem(TypedDict):
+    id: str
+    title: str
 
 @dataclass
 class TurnLog:
@@ -30,15 +33,16 @@ class SessionState:
     condition_sequence: List[Condition]  # 实际跑哪些条件（full/baseline/no_time/ no_frequency）
     active_condition_index: int
     
-    # independent topic-order assignment
-    topic_order_label: str
-    topic_sequence: List[Dict[str, str]]
-    
+    # fixed topic order for all participants
+    topic_sequence: List[TopicItem]
+
+
     profiles_by_condition: Dict[Condition, Dict[str, Any]] # each profile stores theta, s, last_k, count, k
     turns: List[TurnLog]
     turn_count_by_condition: Dict[Condition, int]#最多10轮对话
     ended_reason_by_condition: Dict[Condition, Optional[str]]#每个系统结束的原因：10轮已满 or 提前结束
     
+    post_study: Optional[Dict[str, Any]] = None # 存问卷等后续数据
     
 
 
