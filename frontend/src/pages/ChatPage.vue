@@ -4,8 +4,8 @@
 
     <div class="flex flex-1 overflow-hidden bg-gray-50">
       <!-- 左侧评分栏 -->
-      <div class="w-[320px] shrink-0 border-r bg-sky-100">
-        <div class="sticky top-4 p-4">
+      <div class="w-[320px] shrink-0 overflow-y-auto border-r bg-sky-100">
+        <div class="p-4">
           <RatingPanel
             v-model="store.feedback"
             :enabled="store.pendingFeedback"
@@ -14,7 +14,6 @@
           />
         </div>
       </div>
-
       <!-- 右侧聊天区 -->
       <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div class="border-b bg-white px-6 py-4">

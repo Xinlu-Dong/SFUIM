@@ -1,16 +1,22 @@
 <template>
   <div class="mt-4">
-    <div class="mb-1 text-sm font-medium text-gray-800">{{ title }}</div>
+    <div class="mb-1 flex items-center gap-2">
+      <div class="text-sm font-medium text-gray-800">{{ title }}</div>
+      <HelpTooltip
+        v-if="helpText"
+        :title="title"
+        :content="helpText"
+        :label="`${title} help`"
+      />
+    </div>
 
     <div class="relative px-1 pt-6">
-      <!-- center helper text -->
       <div
         class="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 text-[11px] text-gray-500"
       >
         {{ center }}
       </div>
 
-      <!-- slider -->
       <input
         type="range"
         min="-1"
@@ -22,13 +28,11 @@
       />
     </div>
 
-    <!-- side labels -->
     <div class="mt-1 flex justify-between text-[11px] text-gray-500">
       <span>{{ left }}</span>
       <span>{{ right }}</span>
     </div>
 
-    <!-- current numeric value -->
     <div class="mt-1 text-center text-xs font-medium text-gray-700">
       Current value:
       {{ formattedValue }}
@@ -38,6 +42,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import HelpTooltip from "./HelpTooltip.vue";
 
 const props = defineProps<{
   title: string;
@@ -45,6 +50,7 @@ const props = defineProps<{
   center: string;
   right: string;
   modelValue: number;
+  helpText?: string;
 }>();
 
 const emit = defineEmits<{

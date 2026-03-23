@@ -2,12 +2,12 @@ from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 
-SystemLabel = Literal["A", "B", "C", "D"]  # 只给用户看，和 condition 不一一对应
+SystemLabel = Literal["A", "B", "C", "D"]  # shown to users only
 Condition = Literal["full", "baseline", "no_time", "no_frequency"]
 
 
 class StartStudyRequest(BaseModel):
-    participant_id: Optional[str] = None  # 允许空，后端生成也行
+    participant_id: Optional[str] = None
 
 
 class StartStudyResponse(BaseModel):
@@ -25,7 +25,8 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     turn_index: int
-    # 前端控制用
+
+    # for frontend workflow control
     active_condition: Optional[Condition] = None
     turn_in_condition: int = 0
     need_switch: bool = False
@@ -42,10 +43,10 @@ class NextResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    # 整体评分 r_k：[-5, 5]
+    # overall rating r_k: [-5, 5]
     rating: int = Field(ge=-5, le=5)
 
-    # 三维连续反馈 d_{k,j} ∈ [-1, 1]
+    # continuous feedback d_{k,j} in [-1, 1]
     d_complexity: float = Field(ge=-1.0, le=1.0)
     d_examples: float = Field(ge=-1.0, le=1.0)
     d_structure: float = Field(ge=-1.0, le=1.0)

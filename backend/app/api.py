@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from uuid import uuid4
-from datetime import datetime
-import random
+from datetime import datetime, timezone
 import os
 
 from app.models.schemas import (
@@ -11,24 +10,34 @@ from app.models.schemas import (
     NextResponse, PostStudyRequest, PostStudyResponse,
 )
 from app.core.storage import SessionState, TurnLog, session_store
-from app.core.sfuim_engine import SFUIMConfig, new_profile, render_prompt, update_profile, render_baseline_prompt
+from app.core.sfuim_engine import (
+    SFUIMConfig,
+    detect_and_rewrite_followup,
+    new_profile,
+    recent_user_messages_for_condition,
+    render_prompt,
+    update_profile,
+    render_baseline_prompt,
+)
 from app.core.llm_interface import get_llm
 from app.core.persistence import save_session
 from app.core.assignment import (
     assign_system_label_round_robin,
     get_condition_sequence_for_label,
     get_fixed_topic_sequence,
+    get_label_counts,
 )
 
 router = APIRouter()
 cfg = SFUIMConfig()
-#llm = DummyLLM()
 llm = get_llm()
+
 print("LLM_BACKEND =", os.getenv("LLM_BACKEND"))
 print("OLLAMA_BASE_URL =", os.getenv("OLLAMA_BASE_URL"))
-MAX_TURNS_PER_CONDITION = 10
 
-DEV_MODE = False #这个是为了让我自主控制模型类型设置了，到真实实验阶段这个要改成False
+MAX_TURNS_PER_CONDITION = 10
+DEV_MODE = False  # 正式实验阶段保持 False
+
 
 @router.post("/dev/force_condition")
 def force_condition(session_id: str, condition: str):
@@ -45,7 +54,6 @@ def force_condition(session_id: str, condition: str):
             detail=f"Condition must be one of {state.condition_sequence}",
         )
 
-    # 强制切换 active_condition_index
     state.active_condition_index = state.condition_sequence.index(condition)
     state.profiles_by_condition.setdefault(condition, new_profile())
     save_session(state)
@@ -55,14 +63,14 @@ def force_condition(session_id: str, condition: str):
 
 @router.get("/dev/label_counts")
 def dev_label_counts():
+    if not DEV_MODE:
+        raise HTTPException(status_code=403, detail="Dev mode disabled")
     return get_label_counts(dev_mode=DEV_MODE)
-
 
 
 @router.post("/study/start", response_model=StartStudyResponse)
 def start_study(req: StartStudyRequest):
     sid = uuid4().hex
-    # Assign system label (A/B/C/D) and topic
     label = assign_system_label_round_robin(dev_mode=DEV_MODE)
     seq = get_condition_sequence_for_label(label)
     topic_sequence = get_fixed_topic_sequence()
@@ -72,9 +80,7 @@ def start_study(req: StartStudyRequest):
         system_label=label,
         condition_sequence=seq,
         active_condition_index=0,
-
         topic_sequence=topic_sequence,
-
         profiles_by_condition={c: new_profile() for c in seq},
         turns=[],
         turn_count_by_condition={c: 0 for c in seq},
@@ -113,8 +119,14 @@ def chat(session_id: str, req: ChatRequest):
     condition = _active_condition(state)
     profile = state.profiles_by_condition[condition]
     turns_in_cond = state.turn_count_by_condition[condition]
+    last = _latest_turn_for_active_condition(state)
 
-    # ✅ 满 10 轮：不再继续回答，提示必须切换
+    if last is not None and last.rating is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Please submit feedback for the previous answer before sending a new message.",
+        )
+
     if turns_in_cond >= MAX_TURNS_PER_CONDITION:
         state.ended_reason_by_condition[condition] = "max_turns"
         save_session(state)
@@ -126,31 +138,63 @@ def chat(session_id: str, req: ChatRequest):
             need_switch=True,
             is_finished=False,
         )
-    
-    # 正常生成 prompt & answer
+
+    current_topic = state.topic_sequence[state.active_condition_index]
+    topic_title = current_topic["title"] 
+
+    recent_user_messages = recent_user_messages_for_condition(
+        state=state,
+        condition=condition,
+        limit=2,
+    )
+
+    is_followup, rewritten_message = detect_and_rewrite_followup(
+        user_message=req.message,
+        topic_title=topic_title,
+        recent_user_messages=recent_user_messages,
+    )
+
     if condition == "baseline":
         print("USING BASELINE PROMPT")
-        prompt = render_baseline_prompt(req.message)
+        prompt = render_baseline_prompt(
+            user_message=req.message,
+            cfg=cfg,
+            topic_title=topic_title,
+            recent_user_messages=recent_user_messages,
+            rewritten_message=rewritten_message,
+        )
     else:
         print("USING SFUIM PROMPT")
-        prompt = render_prompt(req.message, profile)
+        prompt = render_prompt(
+            user_message=req.message,
+            profile=profile,
+            cfg=cfg,
+            topic_title=topic_title,
+            recent_user_messages=recent_user_messages,
+            rewritten_message=rewritten_message,
+        )
 
-    
-    state.profiles_by_condition[condition] = profile
     answer = llm.generate(prompt)
 
     current_topic = state.topic_sequence[state.active_condition_index]
-    state.turns.append(TurnLog(
-        t=datetime.utcnow().isoformat(),
-        condition=condition,
-        topic_id=current_topic["id"],
-        topic_title=current_topic["title"],
-        user=req.message,
-        prompt_sent=prompt,
-        answer=answer,
-    ))
+    state.turns.append(
+        TurnLog(
+            t=datetime.now(timezone.utc).isoformat(),
+            condition=condition,
+            topic_id=current_topic["id"],
+            topic_title=current_topic["title"],
+            user=req.message,
+            prompt_sent=prompt,
+            answer=answer,
+            is_followup_detected=is_followup,
+            rewritten_user_message=rewritten_message,
+            topic_title_used=topic_title,
+            recent_user_context_used=recent_user_messages,
+            profile_used_q={k: int(v) for k, v in profile.get("q", {}).items()},
+            profile_used_theta={k: float(v) for k, v in profile.get("theta", {}).items()},
+        )
+    )
 
-    # ✅ 当前条件轮数 +1
     state.turn_count_by_condition[condition] += 1
     turns_in_cond = state.turn_count_by_condition[condition]
 
@@ -172,33 +216,44 @@ def feedback(session_id: str, req: FeedbackRequest):
     if state is None:
         raise HTTPException(status_code=404, detail="Unknown session_id")
 
-    if not state.turns:
-        raise HTTPException(status_code=400, detail="No turns to attach feedback to")
-
-    if state.active_condition_index >= len(state.condition_sequence):
+    if _is_finished(state):
         raise HTTPException(status_code=400, detail="Study already finished")
-    condition = state.condition_sequence[state.active_condition_index]
-    profile = state.profiles_by_condition[condition]
 
-    # 把反馈写回最后一轮
-    last = state.turns[-1]
+    condition = _active_condition(state)
+    profile = state.profiles_by_condition[condition]
+    last = _latest_turn_for_active_condition(state)
+
+    if last is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No current turn in the active system to attach feedback to.",
+        )
+
+    if last.rating is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Feedback for the latest turn has already been submitted.",
+        )
+
     last.rating = req.rating
     last.d_complexity = req.d_complexity
     last.d_examples = req.d_examples
     last.d_structure = req.d_structure
 
-    # 更新画像（baseline 不更新；no_time/no_frequency 做消融）    
-    # ✅ baseline：只记录反馈，不更新画像
-    if condition != "baseline":
-        profile = update_profile(
-            cfg=cfg,
-            profile=profile,
-            rating=req.rating,
-            dC=req.d_complexity,
-            dE=req.d_examples,
-            dS=req.d_structure,
-            condition=condition,
-        )
+    profile = update_profile(
+        cfg=cfg,
+        profile=profile,
+        rating=req.rating,
+        dC=req.d_complexity,
+        dE=req.d_examples,
+        dS=req.d_structure,
+        condition=condition,
+    )
+
+    last.profile_after_feedback_q = {k: int(v) for k, v in profile.get("q", {}).items()}
+    last.profile_after_feedback_theta = {k: float(v) for k, v in profile.get("theta", {}).items()}
+    last.profile_after_feedback_s = float(profile.get("s", 0.5))
+
     state.profiles_by_condition[condition] = profile
     save_session(state)
 
@@ -228,11 +283,8 @@ def get_state(session_id: str):
         "is_finished": is_finished,
         "active_condition_index": state.active_condition_index,
         "active_condition": active_condition,
-
-        
         "current_topic_id": None if current_topic is None else current_topic["id"],
         "current_topic_title": None if current_topic is None else current_topic["title"],
-
         "active_profile": active_profile,
         "turn_count_by_condition": state.turn_count_by_condition,
         "turn_count_total": len(state.turns),
@@ -248,6 +300,7 @@ def get_state(session_id: str):
             "d_structure": state.turns[-1].d_structure,
         }
     }
+
 
 @router.post("/study/{session_id}/next", response_model=NextResponse)
 def next_condition(session_id: str):
@@ -265,10 +318,19 @@ def next_condition(session_id: str):
         )
 
     current = _active_condition(state)
+    last = _latest_turn_for_active_condition(state)
 
-    # 如果没被 max_turns 结束，那就是用户主动结束
+    if last is not None and last.rating is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Please submit feedback for the last answer before ending this system.",
+        )
+
     if state.ended_reason_by_condition[current] is None:
-        state.ended_reason_by_condition[current] = "user_end"
+        if state.turn_count_by_condition[current] >= MAX_TURNS_PER_CONDITION:
+            state.ended_reason_by_condition[current] = "max_turns"
+        else:
+            state.ended_reason_by_condition[current] = "user_end"
 
     ok = _advance_condition(state)
     if not ok:
@@ -302,7 +364,6 @@ def submit_post_study(session_id: str, req: PostStudyRequest):
     if state is None:
         raise HTTPException(status_code=404, detail="Unknown session_id")
 
-    # 必须先完成全部系统，才能提交结束问卷
     if not _is_finished(state):
         raise HTTPException(status_code=400, detail="Study not finished yet")
 
@@ -327,8 +388,17 @@ def submit_post_study(session_id: str, req: PostStudyRequest):
 def _is_finished(state: SessionState) -> bool:
     return state.active_condition_index >= len(state.condition_sequence)
 
+
 def _active_condition(state: SessionState) -> str:
     return state.condition_sequence[state.active_condition_index]
+
+
+def _latest_turn_for_active_condition(state: SessionState):
+    if _is_finished(state) or not state.turns:
+        return None
+    last = state.turns[-1]
+    return last if last.condition == _active_condition(state) else None
+
 
 def _advance_condition(state: SessionState) -> bool:
     """切换到下一个条件。成功返回 True；没有下一个则进入 finished 并返回 False。"""
@@ -337,5 +407,3 @@ def _advance_condition(state: SessionState) -> bool:
         return True
     state.active_condition_index = len(state.condition_sequence)
     return False
-
-

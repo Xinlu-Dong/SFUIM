@@ -4,6 +4,7 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
+from app.core.sfuim_engine import normalize_profile, SFUIMConfig
 from app.core.storage import SessionState, TurnLog, InMemoryStore
 
 
@@ -22,12 +23,14 @@ def _json_safe(obj: Any):
 
 def save_session(state: SessionState) -> None:
     """
-    将整个 SessionState 覆盖写入一个 JSON 文件
+    将整个 SessionState 原子写入一个 JSON 文件。
+    先写临时文件，再用 os.replace 覆盖正式文件，降低文件损坏风险。
     """
     os.makedirs(DATA_DIR, exist_ok=True)
     path = os.path.join(DATA_DIR, f"{state.session_id}.json")
+    tmp_path = f"{path}.tmp"
 
-    with open(path, "w", encoding="utf-8") as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(
             asdict(state),
             f,
@@ -36,44 +39,15 @@ def save_session(state: SessionState) -> None:
             default=_json_safe,
         )
 
+    os.replace(tmp_path, path)
+
 
 def _normalize_profile(profile: dict) -> dict:
     """
-    将 profile 规范化为当前 SFUIM 正式结构：
-    {
-        "theta": {"C": float, "E": float, "S": float},
-        "s": float,
-        "last_k": {"C": int, "E": int, "S": int},
-        "count": {"C": int, "E": int, "S": int},
-        "k": int
-    }
+    复用新版 sfuim_engine 中的 normalize_profile，
+    统一兼容新版 profile 与旧版 profile。
     """
-    if not isinstance(profile, dict):
-        profile = {}
-
-    theta = profile.get("theta", {})
-    last_k = profile.get("last_k", {})
-    count = profile.get("count", {})
-
-    return {
-        "theta": {
-            "C": float(theta.get("C", 0.0)),
-            "E": float(theta.get("E", 0.0)),
-            "S": float(theta.get("S", 0.0)),
-        },
-        "s": float(profile.get("s", 0.5)),
-        "last_k": {
-            "C": int(last_k.get("C", 0)),
-            "E": int(last_k.get("E", 0)),
-            "S": int(last_k.get("S", 0)),
-        },
-        "count": {
-            "C": int(count.get("C", 0)),
-            "E": int(count.get("E", 0)),
-            "S": int(count.get("S", 0)),
-        },
-        "k": int(profile.get("k", 0)),
-    }
+    return normalize_profile(profile, SFUIMConfig())
 
 
 def load_session(session_id: str) -> SessionState | None:
