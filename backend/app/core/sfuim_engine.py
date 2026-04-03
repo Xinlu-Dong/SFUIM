@@ -27,9 +27,13 @@ def sign0(x: float, eps: float = 1e-6) -> int:
 class SFUIMConfig:
     r_max: int = 5
 
-    # 自适应学习率：满意度越低，更新越积极
+    # Level 因子最小更新下限：
+    # 即使用户很满意（r=+r_max），也保留极轻微更新，避免系统完全冻结。
+    a_floor: float = 0.05
+
+    # 自适应学习率：满意度越低，更新越积极; 原max是0.22，为了减小影响，先变为0.11
     eta_min: float = 0.05
-    eta_max: float = 0.22
+    eta_max: float = 0.11
 
     # Time / satisfaction / frequency
     lambd: float = 0.22
@@ -46,7 +50,9 @@ class SFUIMConfig:
     q_hi2: float = 0.65
 
     # 当最近满意度较低时，提示模型要让风格变化更明显
-    repair_tau: float = 0.40
+    # 我要删掉这个参数了，为了让SFUIM作用更纯粹
+    #repair_tau: float = 0.40
+    
     eps: float = 1e-6
 
 
@@ -232,7 +238,7 @@ def _structure_policy(qs: int, qe: int) -> str:
         "Use the fixed structure: 1) Core idea 2) How it works 3) Practical note 4) Key takeaway."
     )
 
-
+'''
 # 根据当前满意度 s 判断是否需要触发 repair 提示。
 # 当最近满意度较低时，额外要求模型让这次风格调整更明显。
 def _repair_policy(s: float, cfg: SFUIMConfig) -> str:
@@ -242,11 +248,12 @@ def _repair_policy(s: float, cfg: SFUIMConfig) -> str:
             "Make the style shift clearly noticeable in this response instead of staying close to a neutral middle-ground style."
         )
     return ""
+'''    
 
 
 # 将 profile 中的离散策略 q 映射为 prompt 所需的完整风格规则集合。
 # 返回值包括角色、复杂度规则、例子规则、结构规则和 repair 规则。
-def map_policy_to_prompt(profile: Dict, cfg: SFUIMConfig | None = None) -> Tuple[str, str, str, str, str]:
+def map_policy_to_prompt(profile: Dict, cfg: SFUIMConfig | None = None) -> Tuple[str, str, str, str]:
     cfg = cfg or SFUIMConfig()
     profile = normalize_profile(profile, cfg)
 
@@ -257,9 +264,9 @@ def map_policy_to_prompt(profile: Dict, cfg: SFUIMConfig | None = None) -> Tuple
     role, complexity_rule = _complexity_policy(qc)
     examples_rule = _examples_policy(qe)
     structure_rule = _structure_policy(qs, qe)
-    repair_rule = _repair_policy(float(profile["s"]), cfg)
+    #repair_rule = _repair_policy(float(profile["s"]), cfg)
 
-    return role, complexity_rule, examples_rule, structure_rule, repair_rule
+    return role, complexity_rule, examples_rule, structure_rule, #repair_rule
 
 
 
@@ -341,9 +348,9 @@ def render_prompt(
 ) -> str:
     cfg = cfg or SFUIMConfig()
     profile = normalize_profile(profile, cfg)
-    role, complexity_rule, examples_rule, structure_rule, repair_rule = map_policy_to_prompt(profile, cfg)
+    role, complexity_rule, examples_rule, structure_rule = map_policy_to_prompt(profile, cfg)
 
-    repair_block = f"- {repair_rule}\n" if repair_rule else ""
+    #repair_block = f"- {repair_rule}\n" if repair_rule else ""
 
     topic_block = ""
     if topic_title:
@@ -372,7 +379,7 @@ def render_prompt(
         f"- {complexity_rule}\n"
         f"- {examples_rule}\n"
         f"- {structure_rule}\n"
-        f"{repair_block}\n"
+        #f"{repair_block}\n"
         "[FOLLOW-UP RULE]\n"
         "- The current message may be a follow-up that uses pronouns or omitted references.\n"
         "- First resolve references using the TOPIC and RECENT USER CONTEXT.\n"
@@ -442,11 +449,16 @@ def update_profile(
       theta_{k+1,j} = tanh(beta * z_{k+1,j})
       q_{k+1,j} = Q(theta_{k+1,j})
 
+    Level factor:
+      A_k uses dissatisfaction-based scaling with a non-zero floor:
+      A_k = a_floor + (1 - a_floor) * (r_max - r_k) / (2 * r_max)
+
     condition:
       - full: 四因子全开
       - baseline: 固定中性 prompt，不做个性化学习
       - no_time: 关闭时间衰减，rho = 1
       - no_frequency: 关闭频率增强，F = 1
+    
     """
     profile = normalize_profile(profile, cfg)
 
@@ -461,7 +473,15 @@ def update_profile(
         profile["k"] = k
         return profile
 
-    A = clip(abs(float(rating)) / cfg.r_max, 0.0, 1.0)
+    # Level factor:
+    # 评分越低（越不满意），更新越强；
+    # 评分越高（越满意），更新越弱；
+    # 但保留一个最小更新下限 a_floor，避免高分时完全不更新。
+    rating_value = clip(float(rating), -cfg.r_max, cfg.r_max)
+    dissatisfaction = (cfg.r_max - rating_value) / (2 * cfg.r_max)  # maps [-r_max, r_max] -> [1, 0]
+    A = cfg.a_floor + (1.0 - cfg.a_floor) * dissatisfaction
+    A = clip(A, cfg.a_floor, 1.0)
+    
     d = {
         "C": clip(float(dC), -1.0, 1.0),
         "E": clip(float(dE), -1.0, 1.0),
