@@ -16,6 +16,8 @@ backend/data/sessions/
 backend/.env
 backend/data/label_counts_dev.json
 backend/data/*.json
+backend/data/replay_
+backend/data
 
 .github/
 
@@ -29,3 +31,10 @@ Thumbs.db
 .vscode/
 
 /startComment.txt
+
+# Analysis and tests
+backend/scripts/*.py
+backend/tests/*.py
+backend/tests/
+
+
