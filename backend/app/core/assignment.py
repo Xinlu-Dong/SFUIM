@@ -5,7 +5,7 @@ from typing import Dict, List, TypedDict
 
 from app.core.topic_catalog import get_topic_catalog, TopicItem
 
-# 这个路径用“绝对定位 backend/data”，跟 persistence 的做法一致
+# 绝对定位到 backend/data
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # -> backend/
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
@@ -26,16 +26,46 @@ class AssignmentState(TypedDict):
     counts: Dict[str, int]
 
 
-def _get_state_path(dev_mode: bool) -> str:
+def _normalize_namespace(namespace: str) -> str:
+    """
+    统一 namespace 命名，避免传入空值或奇怪字符串。
+    你现在正式实验就传 "final"，pilot 传 "pilot"。
+    """
+    ns = (namespace or "").strip().lower()
+    if not ns:
+        return "final"
+    return ns
+
+
+def _get_state_path(dev_mode: bool, namespace: str = "final") -> str:
+    """
+    为不同实验批次生成不同 assignment state 文件：
+
+    正式实验:
+      assignment_state_final.json
+    pilot:
+      assignment_state_pilot.json
+
+    dev 模式:
+      assignment_state_dev_final.json
+      assignment_state_dev_pilot.json
+    """
     os.makedirs(DATA_DIR, exist_ok=True)
-    filename = "assignment_state_dev.json" if dev_mode else "assignment_state.json"
+
+    ns = _normalize_namespace(namespace)
+
+    if dev_mode:
+        filename = f"assignment_state_dev_{ns}.json"
+    else:
+        filename = f"assignment_state_{ns}.json"
+
     return os.path.join(DATA_DIR, filename)
 
 
 def _default_state() -> AssignmentState:
     return {
         "next_index": 0,
-        "counts": {"A": 0, "B": 0, "C": 0, "D": 0},
+        "counts": {label: 0 for label in LABEL_ORDER},
     }
 
 
@@ -49,7 +79,7 @@ def _read_state(path: str) -> AssignmentState:
     next_index = int(data.get("next_index", 0)) % len(LABEL_ORDER)
 
     raw_counts = data.get("counts", {})
-    counts = {k: int(raw_counts.get(k, 0)) for k in LABEL_ORDER}
+    counts = {label: int(raw_counts.get(label, 0)) for label in LABEL_ORDER}
 
     return {
         "next_index": next_index,
@@ -64,15 +94,16 @@ def _atomic_write_json(path: str, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def assign_system_label_round_robin(dev_mode: bool = False) -> str:
+def assign_system_label_round_robin(dev_mode: bool = False, namespace: str = "final") -> str:
     """
-    Strictly assign labels in cyclic order:
+    严格循环分配标签：
     A -> B -> C -> D -> A -> ...
-    Persist the pointer so discontinuous experiment sessions still
-    follow the intended Latin-square order globally.
+
+    关键改动：
+    现在每个 namespace（例如 pilot / final）都有自己独立的 assignment state。
     """
     with _lock:
-        path = _get_state_path(dev_mode)
+        path = _get_state_path(dev_mode=dev_mode, namespace=namespace)
         state = _read_state(path)
 
         idx = state["next_index"]
@@ -128,13 +159,13 @@ def build_assignment_for_label(label: str) -> List[dict]:
     ]
 
 
-def get_assignment_state(dev_mode: bool = False) -> AssignmentState:
+def get_assignment_state(dev_mode: bool = False, namespace: str = "final") -> AssignmentState:
     with _lock:
-        path = _get_state_path(dev_mode)
+        path = _get_state_path(dev_mode=dev_mode, namespace=namespace)
         return _read_state(path)
 
 
-def get_label_counts(dev_mode: bool = False) -> Dict[str, int]:
+def get_label_counts(dev_mode: bool = False, namespace: str = "final") -> Dict[str, int]:
     with _lock:
-        path = _get_state_path(dev_mode)
+        path = _get_state_path(dev_mode=dev_mode, namespace=namespace)
         return _read_state(path)["counts"]

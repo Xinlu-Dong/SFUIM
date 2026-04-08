@@ -41,16 +41,27 @@ class TurnLog:
     # profile used to render the current answer
     profile_used_q: Optional[Dict[str, int]] = None
     profile_used_theta: Optional[Dict[str, float]] = None
-
+    profile_used_z: Optional[Dict[str, float]] = None
+    profile_used_s: Optional[float] = None
+    
     # profile after this turn's feedback update
     profile_after_feedback_q: Optional[Dict[str, int]] = None
     profile_after_feedback_theta: Optional[Dict[str, float]] = None
     profile_after_feedback_s: Optional[float] = None
+    profile_after_feedback_z: Optional[Dict[str, float]] = None
+
 
 
 @dataclass
 class SessionState:
     session_id: str
+    
+    #study metadata
+    study_phase: str
+    engine_version: str
+    config_snapshot: Dict[str, Any]
+    assignment_namespace: str
+
     system_label: str  # A/B/C/D: order-group label shown to the participant
     condition_sequence: List[Condition]  # actual system sequence
     active_condition_index: int

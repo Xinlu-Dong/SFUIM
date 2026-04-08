@@ -13,6 +13,7 @@ from app.core.storage import SessionState, TurnLog, session_store
 from app.core.sfuim_engine import (
     SFUIMConfig,
     detect_and_rewrite_followup,
+    export_config_snapshot,
     new_profile,
     recent_user_messages_for_condition,
     render_prompt,
@@ -36,7 +37,12 @@ print("LLM_BACKEND =", os.getenv("LLM_BACKEND"))
 print("OLLAMA_BASE_URL =", os.getenv("OLLAMA_BASE_URL"))
 
 MAX_TURNS_PER_CONDITION = 10
-DEV_MODE = False  # 正式实验阶段保持 False
+DEV_MODE = False
+
+# ===== study batch metadata =====
+STUDY_PHASE = "final_tuned_experiment"
+ASSIGNMENT_NAMESPACE = "final"
+ENGINE_VERSION = "v_final_tuned_2026_04_08"
 
 
 @router.post("/dev/force_condition")
@@ -65,18 +71,25 @@ def force_condition(session_id: str, condition: str):
 def dev_label_counts():
     if not DEV_MODE:
         raise HTTPException(status_code=403, detail="Dev mode disabled")
-    return get_label_counts(dev_mode=DEV_MODE)
+    return get_label_counts(dev_mode=DEV_MODE, namespace=ASSIGNMENT_NAMESPACE)
 
 
 @router.post("/study/start", response_model=StartStudyResponse)
 def start_study(req: StartStudyRequest):
     sid = uuid4().hex
-    label = assign_system_label_round_robin(dev_mode=DEV_MODE)
+    label = assign_system_label_round_robin(
+        dev_mode=DEV_MODE,
+        namespace=ASSIGNMENT_NAMESPACE,
+    )
     seq = get_condition_sequence_for_label(label)
     topic_sequence = get_fixed_topic_sequence()
 
     state = SessionState(
         session_id=sid,
+        study_phase=STUDY_PHASE,
+        engine_version=ENGINE_VERSION,
+        config_snapshot=export_config_snapshot(cfg),
+        assignment_namespace=ASSIGNMENT_NAMESPACE,
         system_label=label,
         condition_sequence=seq,
         active_condition_index=0,
@@ -85,6 +98,7 @@ def start_study(req: StartStudyRequest):
         turns=[],
         turn_count_by_condition={c: 0 for c in seq},
         ended_reason_by_condition={c: None for c in seq},
+        post_study=None,
     )
 
     session_store.create_session(state)
@@ -140,7 +154,7 @@ def chat(session_id: str, req: ChatRequest):
         )
 
     current_topic = state.topic_sequence[state.active_condition_index]
-    topic_title = current_topic["title"] 
+    topic_title = current_topic["title"]
 
     recent_user_messages = recent_user_messages_for_condition(
         state=state,
@@ -155,7 +169,6 @@ def chat(session_id: str, req: ChatRequest):
     )
 
     if condition == "baseline":
-        print("USING BASELINE PROMPT")
         prompt = render_baseline_prompt(
             user_message=req.message,
             cfg=cfg,
@@ -164,7 +177,6 @@ def chat(session_id: str, req: ChatRequest):
             rewritten_message=rewritten_message,
         )
     else:
-        print("USING SFUIM PROMPT")
         prompt = render_prompt(
             user_message=req.message,
             profile=profile,
@@ -176,7 +188,6 @@ def chat(session_id: str, req: ChatRequest):
 
     answer = llm.generate(prompt)
 
-    current_topic = state.topic_sequence[state.active_condition_index]
     state.turns.append(
         TurnLog(
             t=datetime.now(timezone.utc).isoformat(),
@@ -190,8 +201,10 @@ def chat(session_id: str, req: ChatRequest):
             rewritten_user_message=rewritten_message,
             topic_title_used=topic_title,
             recent_user_context_used=recent_user_messages,
+            profile_used_z={k: float(v) for k, v in profile.get("z", {}).items()},
             profile_used_q={k: int(v) for k, v in profile.get("q", {}).items()},
             profile_used_theta={k: float(v) for k, v in profile.get("theta", {}).items()},
+            profile_used_s=float(profile.get("s", 0.5)),
         )
     )
 
@@ -250,6 +263,7 @@ def feedback(session_id: str, req: FeedbackRequest):
         condition=condition,
     )
 
+    last.profile_after_feedback_z = {k: float(v) for k, v in profile.get("z", {}).items()}
     last.profile_after_feedback_q = {k: int(v) for k, v in profile.get("q", {}).items()}
     last.profile_after_feedback_theta = {k: float(v) for k, v in profile.get("theta", {}).items()}
     last.profile_after_feedback_s = float(profile.get("s", 0.5))
@@ -279,6 +293,9 @@ def get_state(session_id: str):
 
     return {
         "session_id": state.session_id,
+        "study_phase": state.study_phase,
+        "engine_version": state.engine_version,
+        "assignment_namespace": state.assignment_namespace,
         "system_label": state.system_label,
         "is_finished": is_finished,
         "active_condition_index": state.active_condition_index,
@@ -401,7 +418,6 @@ def _latest_turn_for_active_condition(state: SessionState):
 
 
 def _advance_condition(state: SessionState) -> bool:
-    """切换到下一个条件。成功返回 True；没有下一个则进入 finished 并返回 False。"""
     if state.active_condition_index < len(state.condition_sequence) - 1:
         state.active_condition_index += 1
         return True

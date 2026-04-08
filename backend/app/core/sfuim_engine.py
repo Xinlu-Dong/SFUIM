@@ -31,29 +31,48 @@ class SFUIMConfig:
     # 即使用户很满意（r=+r_max），也保留极轻微更新，避免系统完全冻结。
     a_floor: float = 0.05
 
-    # 自适应学习率：满意度越低，更新越积极; 原max是0.22，为了减小影响，先变为0.11
-    eta_min: float = 0.05
-    eta_max: float = 0.11
+    # 自适应学习率：满意度越低，更新越积极; 原max是0.22，为了减小影响，先变为0.11,感觉变化率太小了，再改成0.15
+    eta_min: float = 0.07 #原是0.05
+    eta_max: float = 0.15 #原是0.11
 
     # Time / satisfaction / frequency
-    lambd: float = 0.22
+    lambd: float = 0.12 #原是0.22
     gamma: float = 0.10
-    alpha: float = 0.65
+    alpha: float = 0.80 #原是0.65
 
-    # z -> theta 的平滑压缩强度
-    beta: float = 2.0
+    # z -> theta 的平滑压缩强度, 原来是2.0，提高到2.5
+    beta: float = 2.5
 
     # q = Q(theta) 的 5 档阈值
-    q_lo2: float = -0.65
-    q_lo1: float = -0.20
-    q_hi1: float = 0.20
-    q_hi2: float = 0.65
+    q_lo2: float = -0.65 #原来是-0.65
+    q_lo1: float = -0.15 #原来是-0.20
+    q_hi1: float = 0.15 #原来是0.20
+    q_hi2: float = 0.65 #原来是0.65
 
     # 当最近满意度较低时，提示模型要让风格变化更明显
     # 我要删掉这个参数了，为了让SFUIM作用更纯粹
     #repair_tau: float = 0.40
     
     eps: float = 1e-6
+
+
+def export_config_snapshot(cfg: SFUIMConfig) -> Dict[str, float | int]:
+    return {
+        "r_max": cfg.r_max,
+        "a_floor": cfg.a_floor,
+        "eta_min": cfg.eta_min,
+        "eta_max": cfg.eta_max,
+        "lambd": cfg.lambd,
+        "gamma": cfg.gamma,
+        "alpha": cfg.alpha,
+        "beta": cfg.beta,
+        "q_lo2": cfg.q_lo2,
+        "q_lo1": cfg.q_lo1,
+        "q_hi1": cfg.q_hi1,
+        "q_hi2": cfg.q_hi2,
+        "eps": cfg.eps,
+    }
+
 
 
 # -----------------------------
@@ -178,31 +197,43 @@ def _complexity_policy(qc: int) -> Tuple[str, str]:
     if qc <= -2:
         role = "You are a patient teaching assistant helping a beginner learner."
         rule = (
-            "Keep the explanation very simple. Avoid formulas. Avoid dense jargon. "
-            "If a technical term is necessary, explain it immediately in plain language."
+            "Keep the explanation very simple. "
+            "Do not use formulas. "
+            "Do not use dense jargon. "
+            "If a technical term is necessary, explain it immediately in plain language. "
+            "Use short sentences."
         )
     elif qc == -1:
         role = "You are a supportive teaching assistant."
         rule = (
-            "Keep the explanation simple and accessible. Use only light terminology and do not go too deep."
+            "Keep the explanation simple and accessible. "
+            "Use only light terminology. "
+            "Do not go deep into mechanisms or implementation detail."
         )
     elif qc == 0:
         role = "You are a teaching assistant with solid domain knowledge."
         rule = (
-            "Start intuitively, then add moderate detail only where it helps understanding."
+            "Start with an intuitive explanation first. "
+            "Then add one moderate technical detail if needed. "
+            "Keep the answer understandable for a general learner."
         )
     elif qc == 1:
         role = "You are both a teaching assistant and a domain specialist."
         rule = (
-            "Give a technical but still teachable explanation. Include mechanisms, trade-offs, or implementation detail when useful."
+            "Give a more technical but still teachable explanation. "
+            "Include at least one mechanism, trade-off, or implementation-related detail. "
+            "Use correct technical vocabulary. "
+            "Do not oversimplify."
         )
     else:
         role = "You are a precise domain expert."
         rule = (
-            "Use technical language accurately. Discuss mechanisms and trade-offs directly. You may use formulas or implementation detail when it improves precision."
+            "Use technical language accurately. "
+            "Discuss mechanisms and trade-offs directly. "
+            "Include implementation detail or formulas when relevant. "
+            "Assume the user can handle a more advanced explanation."
         )
     return role, rule
-
 
 # 根据例子偏好档位 qE，生成回答中例子的数量与形式要求。
 # qE 越高，系统越倾向提供更多、更丰富的示例。
@@ -214,8 +245,8 @@ def _examples_policy(qe: int) -> str:
     if qe == 0:
         return "Use exactly one representative example if it helps understanding."
     if qe == 1:
-        return "Use two practical examples."
-    return "Use two contrasting examples or three short concrete examples."
+        return "Use exactly two practical examples."
+    return "Use three or more contrasting examples or concrete examples."
 
 
 # 根据结构偏好 qS 和例子偏好 qE，生成回答结构要求。
