@@ -38,7 +38,7 @@ class SFUIMConfig:
     # Time / satisfaction / frequency
     lambd: float = 0.12 #原是0.22
     gamma: float = 0.10
-    alpha: float = 0.80 #原是0.65
+    alpha: float = 1.20 #原是0.65
 
     # z -> theta 的平滑压缩强度, 原来是2.0，提高到2.5
     beta: float = 2.5
